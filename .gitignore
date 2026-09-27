@@ -1,0 +1,10 @@
+.vscode/
+.fbt/
+dist/
+build/
+.DS_Store
+*.fap
+*.elf
+*.map
+*.lst
+*.log
