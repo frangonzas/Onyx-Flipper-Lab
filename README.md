@@ -15,13 +15,14 @@ TYPE        External FAP
 LANGUAGE    C
 BUILD       uFBT / official release SDK
 SCOPE       Defensive / authorized / read-only radio
-VERSION     3.0
+VERSION     3.0.0 FINAL
+STATUS      TESTED / FINALIZED
 CI          PASSING
 ```
 
-## v3.0 — Field Audit Terminal
+## v3.0.0 FINAL — Field Audit Terminal
 
-Version 3 turns the app from a set of individual tools into a **session-oriented audit terminal**.
+Version 3.0.0 is the **final tested project version**. It turns the app from a set of individual tools into a **session-oriented audit terminal**.
 
 New in v3:
 
@@ -174,5 +175,11 @@ See:
 ## Ethical scope
 
 Use hardware-security and radio-analysis tools only on devices, systems and infrastructure that you own or are explicitly authorized to assess.
+
+### Project state
+
+**TESTED · FINALIZED · MAINTENANCE ONLY**
+
+The project has been compiled successfully against the official Flipper release SDK and confirmed installed on physical Flipper Zero hardware.
 
 © 2026 Fran Gonzas

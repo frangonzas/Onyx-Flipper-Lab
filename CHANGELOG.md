@@ -1,6 +1,13 @@
 # Changelog
 
-## 3.0.0 — Field Audit Terminal
+## 3.0.0 — Field Audit Terminal · FINAL
+
+### Final validation
+
+- compiled successfully with the official Flipper release SDK;
+- installed and accepted as tested on physical Flipper Zero hardware;
+- project status set to FINAL / MAINTENANCE ONLY;
+- no further feature development planned unless the project is reopened.
 
 ### Added
 
