@@ -22,6 +22,7 @@
 
 #include <gui/gui.h>
 #include <input/input.h>
+#include <storage/storage.h>
 
 #include <infrared.h>
 #include <infrared_worker.h>
@@ -42,7 +43,7 @@
 
 #define TAG "OnyxFlipperLab"
 
-#define ONYX_MENU_COUNT 10U
+#define ONYX_MENU_COUNT 11U
 #define ONYX_MENU_VISIBLE 5U
 #define ONYX_PASSWORD_LENGTH 18U
 #define ONYX_RANDOM_BYTES 8U
@@ -57,6 +58,7 @@ typedef enum {
     OnyxScreenInfraredAudit,
     OnyxScreenNfcAudit,
     OnyxScreenLfRfidAudit,
+    OnyxScreenSessionReport,
     OnyxScreenPassword,
     OnyxScreenRandomHex,
     OnyxScreenSecurityTips,
@@ -118,6 +120,22 @@ typedef struct {
     size_t lfrfid_data_size;
     uint32_t lfrfid_detection_count;
 
+    // Metricas globales de la sesion de auditoria.
+    DateTime session_started;
+    uint32_t gpio_session_samples;
+    uint16_t gpio_session_min_mv;
+    uint16_t gpio_session_max_mv;
+    uint32_t subghz_session_samples;
+    float subghz_session_min_rssi;
+    float subghz_session_max_rssi;
+    bool subghz_baseline_set;
+    float subghz_baseline_rssi;
+    uint32_t ir_session_signals;
+    uint32_t nfc_session_detections;
+    uint32_t lfrfid_session_detections;
+    uint32_t report_export_count;
+    bool report_last_export_ok;
+
     FuriMutex* mutex;
 } OnyxState;
 
@@ -128,6 +146,7 @@ static const char* const onyx_menu_items[ONYX_MENU_COUNT] = {
     "IR inspector",
     "NFC detector",
     "LF RFID reader",
+    "Session report",
     "Password generator",
     "Random HEX",
     "Security tips",
@@ -273,6 +292,9 @@ static void onyx_gpio_sample(OnyxState* state) {
     furi_mutex_acquire(state->mutex, FuriWaitForever);
     state->gpio_raw = raw;
     state->gpio_mv = mv;
+    state->gpio_session_samples++;
+    if(mv < state->gpio_session_min_mv) state->gpio_session_min_mv = mv;
+    if(mv > state->gpio_session_max_mv) state->gpio_session_max_mv = mv;
     furi_mutex_release(state->mutex);
 }
 
@@ -331,10 +353,18 @@ static void onyx_draw_gpio(Canvas* canvas, const OnyxState* state) {
         canvas_draw_str(canvas, 2, 24, line);
 
         snprintf(line, sizeof(line), "Voltage: %u mV", (unsigned)state->gpio_mv);
-        canvas_draw_str(canvas, 2, 37, line);
+        canvas_draw_str(canvas, 2, 35, line);
 
-        snprintf(line, sizeof(line), "Raw ADC: %u", (unsigned)state->gpio_raw);
-        canvas_draw_str(canvas, 2, 50, line);
+        snprintf(
+            line,
+            sizeof(line),
+            "Session: %u-%u mV",
+            (unsigned)state->gpio_session_min_mv,
+            (unsigned)state->gpio_session_max_mv);
+        canvas_draw_str(canvas, 2, 46, line);
+
+        snprintf(line, sizeof(line), "Raw:%u N:%lu", (unsigned)state->gpio_raw, (unsigned long)state->gpio_session_samples);
+        canvas_draw_str(canvas, 2, 57, line);
     }
 
     onyx_draw_footer(canvas, "< >:pin OK:sample Back");
@@ -353,6 +383,7 @@ static bool onyx_subghz_apply_frequency(OnyxState* state) {
                 subghz_devices_set_frequency(state->subghz_device, requested);
             subghz_devices_set_rx(state->subghz_device);
             state->subghz_peak_rssi = -120.0f;
+            state->subghz_baseline_set = false;
             return true;
         }
 
@@ -424,6 +455,16 @@ static void onyx_subghz_sample(OnyxState* state) {
     state->subghz_rssi = rssi;
     if(rssi > state->subghz_peak_rssi) state->subghz_peak_rssi = rssi;
     state->subghz_lqi = lqi;
+
+    if(state->subghz_session_samples == 0U) {
+        state->subghz_session_min_rssi = rssi;
+        state->subghz_session_max_rssi = rssi;
+    } else {
+        if(rssi < state->subghz_session_min_rssi) state->subghz_session_min_rssi = rssi;
+        if(rssi > state->subghz_session_max_rssi) state->subghz_session_max_rssi = rssi;
+    }
+    state->subghz_session_samples++;
+
     furi_mutex_release(state->mutex);
 }
 
@@ -450,10 +491,22 @@ static void onyx_draw_subghz(Canvas* canvas, const OnyxState* state) {
     canvas_draw_str(canvas, 2, 36, line);
 
     snprintf(line, sizeof(line), "Peak: %.1f  LQI:%u", (double)state->subghz_peak_rssi, state->subghz_lqi);
-    canvas_draw_str(canvas, 2, 48, line);
+    canvas_draw_str(canvas, 2, 47, line);
 
-    canvas_draw_str(canvas, 2, 58, "RX only / no transmit");
-    onyx_draw_footer(canvas, "< >:band Back");
+    if(state->subghz_baseline_set) {
+        const float delta = state->subghz_rssi - state->subghz_baseline_rssi;
+        snprintf(
+            line,
+            sizeof(line),
+            "Delta:%+.1f %s",
+            (double)delta,
+            (delta > 12.0f || delta < -12.0f) ? "CHANGE" : "stable");
+        canvas_draw_str(canvas, 2, 58, line);
+    } else {
+        canvas_draw_str(canvas, 2, 58, "OK sets baseline");
+    }
+
+    onyx_draw_footer(canvas, "< >:band OK:base Back");
 }
 
 static void onyx_draw_bluetooth(Canvas* canvas) {
@@ -492,6 +545,7 @@ static void onyx_ir_received_callback(void* context, InfraredWorkerSignal* recei
 
     state->ir_has_signal = true;
     state->ir_signal_count++;
+    state->ir_session_signals++;
 
     if(infrared_worker_signal_is_decoded(received_signal)) {
         const InfraredMessage* message = infrared_worker_get_decoded_signal(received_signal);
@@ -585,6 +639,7 @@ static void onyx_nfc_scanner_callback(NfcScannerEvent event, void* context) {
 
     state->nfc_detected = true;
     state->nfc_detection_count++;
+    state->nfc_session_detections++;
     state->nfc_protocol_count = MIN(event.data.protocol_num, ONYX_NFC_PROTOCOL_MAX);
 
     for(size_t i = 0; i < state->nfc_protocol_count; i++) {
@@ -664,6 +719,7 @@ static void onyx_lfrfid_read_callback(
 
     state->lfrfid_found = true;
     state->lfrfid_detection_count++;
+    state->lfrfid_session_detections++;
     state->lfrfid_data_size = copy_size;
     snprintf(
         state->lfrfid_protocol_name,
@@ -812,11 +868,183 @@ static void onyx_draw_security_tips(Canvas* canvas, const OnyxState* state) {
     onyx_draw_footer(canvas, "OK:page  Back:menu");
 }
 
+
+static bool onyx_export_session_report(OnyxState* state) {
+    DateTime ended;
+    furi_hal_rtc_get_datetime(&ended);
+
+    furi_mutex_acquire(state->mutex, FuriWaitForever);
+
+    const DateTime started = state->session_started;
+    const uint32_t gpio_samples = state->gpio_session_samples;
+    const uint16_t gpio_min = gpio_samples ? state->gpio_session_min_mv : 0U;
+    const uint16_t gpio_max = gpio_samples ? state->gpio_session_max_mv : 0U;
+    const uint32_t rf_samples = state->subghz_session_samples;
+    const float rf_min = state->subghz_session_min_rssi;
+    const float rf_max = state->subghz_session_max_rssi;
+    const uint32_t ir_count = state->ir_session_signals;
+    const uint32_t nfc_count = state->nfc_session_detections;
+    const uint32_t lf_count = state->lfrfid_session_detections;
+
+    furi_mutex_release(state->mutex);
+
+    FuriString* report = furi_string_alloc();
+    furi_string_printf(
+        report,
+        "ONYX FLIPPER LAB - FIELD AUDIT REPORT\n"
+        "Version: 3.0\n"
+        "Operator: Fran Gonzas\n"
+        "Scope: defensive / authorized / read-only radio\n\n"
+        "Session start: %04u-%02u-%02u %02u:%02u:%02u\n"
+        "Report time:   %04u-%02u-%02u %02u:%02u:%02u\n\n",
+        started.year,
+        started.month,
+        started.day,
+        started.hour,
+        started.minute,
+        started.second,
+        ended.year,
+        ended.month,
+        ended.day,
+        ended.hour,
+        ended.minute,
+        ended.second);
+
+    furi_string_cat_printf(
+        report,
+        "[GPIO]\n"
+        "samples=%lu\n"
+        "min_mv=%u\n"
+        "max_mv=%u\n\n",
+        (unsigned long)gpio_samples,
+        gpio_min,
+        gpio_max);
+
+    if(rf_samples > 0U) {
+        furi_string_cat_printf(
+            report,
+            "[SUBGHZ_RX]\n"
+            "samples=%lu\n"
+            "min_rssi_dbm=%.1f\n"
+            "max_rssi_dbm=%.1f\n"
+            "tx_performed=false\n\n",
+            (unsigned long)rf_samples,
+            (double)rf_min,
+            (double)rf_max);
+    } else {
+        furi_string_cat_printf(
+            report,
+            "[SUBGHZ_RX]\n"
+            "samples=0\n"
+            "tx_performed=false\n\n");
+    }
+
+    furi_string_cat_printf(
+        report,
+        "[SIGNAL_INVENTORY]\n"
+        "ir_signals=%lu\n"
+        "nfc_detection_events=%lu\n"
+        "lf_rfid_detection_events=%lu\n\n"
+        "[PRIVACY]\n"
+        "credential_payloads_saved=false\n"
+        "ir_commands_saved=false\n"
+        "nfc_uid_saved=false\n"
+        "lf_rfid_bytes_saved=false\n\n"
+        "END OF REPORT\n",
+        (unsigned long)ir_count,
+        (unsigned long)nfc_count,
+        (unsigned long)lf_count);
+
+    Storage* storage = furi_record_open(RECORD_STORAGE);
+    File* file = storage_file_alloc(storage);
+
+    bool ok = storage_file_open(
+        file,
+        APP_DATA_PATH("last_audit_report.txt"),
+        FSAM_WRITE,
+        FSOM_CREATE_ALWAYS);
+
+    if(ok) {
+        const size_t expected = furi_string_size(report);
+        const size_t written =
+            storage_file_write(file, furi_string_get_cstr(report), expected);
+        ok = (written == expected);
+        storage_file_close(file);
+    }
+
+    storage_file_free(file);
+    furi_record_close(RECORD_STORAGE);
+    furi_string_free(report);
+
+    furi_mutex_acquire(state->mutex, FuriWaitForever);
+    state->report_last_export_ok = ok;
+    if(ok) state->report_export_count++;
+    furi_mutex_release(state->mutex);
+
+    return ok;
+}
+
+static void onyx_draw_session_report(Canvas* canvas, const OnyxState* state) {
+    onyx_draw_header(canvas, "FIELD REPORT");
+    canvas_set_font(canvas, FontSecondary);
+
+    char line[34];
+
+    if(state->gpio_session_samples > 0U) {
+        snprintf(
+            line,
+            sizeof(line),
+            "GPIO:%lu %u-%umV",
+            (unsigned long)state->gpio_session_samples,
+            (unsigned)state->gpio_session_min_mv,
+            (unsigned)state->gpio_session_max_mv);
+    } else {
+        snprintf(line, sizeof(line), "GPIO:no samples");
+    }
+    canvas_draw_str(canvas, 2, 23, line);
+
+    if(state->subghz_session_samples > 0U) {
+        snprintf(
+            line,
+            sizeof(line),
+            "RF:%lu %.0f/%.0fdBm",
+            (unsigned long)state->subghz_session_samples,
+            (double)state->subghz_session_min_rssi,
+            (double)state->subghz_session_max_rssi);
+    } else {
+        snprintf(line, sizeof(line), "RF:no samples");
+    }
+    canvas_draw_str(canvas, 2, 34, line);
+
+    snprintf(
+        line,
+        sizeof(line),
+        "IR:%lu NFC:%lu LF:%lu",
+        (unsigned long)state->ir_session_signals,
+        (unsigned long)state->nfc_session_detections,
+        (unsigned long)state->lfrfid_session_detections);
+    canvas_draw_str(canvas, 2, 45, line);
+
+    if(state->report_export_count > 0U) {
+        snprintf(
+            line,
+            sizeof(line),
+            "Export:%s #%lu",
+            state->report_last_export_ok ? "SAVED" : "ERROR",
+            (unsigned long)state->report_export_count);
+    } else {
+        snprintf(line, sizeof(line), "Export:ready");
+    }
+    canvas_draw_str(canvas, 2, 56, line);
+
+    onyx_draw_footer(canvas, "OK:export Back:menu");
+}
+
 static void onyx_draw_about(Canvas* canvas) {
     onyx_draw_header(canvas, "ABOUT");
     canvas_set_font(canvas, FontSecondary);
 
-    canvas_draw_str(canvas, 2, 24, "Onyx Flipper Lab v2.0");
+    canvas_draw_str(canvas, 2, 24, "Onyx Flipper Lab v3.0");
     canvas_draw_str(canvas, 2, 35, "Fran Gonzas");
     canvas_draw_str(canvas, 2, 46, "Defensive audit suite");
     canvas_draw_str(canvas, 2, 57, "RX / read-only radio");
@@ -853,6 +1081,9 @@ static void onyx_draw_callback(Canvas* canvas, void* context) {
         break;
     case OnyxScreenLfRfidAudit:
         onyx_draw_lfrfid(canvas, state);
+        break;
+    case OnyxScreenSessionReport:
+        onyx_draw_session_report(canvas, state);
         break;
     case OnyxScreenPassword:
         onyx_draw_password(canvas, state);
@@ -895,12 +1126,14 @@ static OnyxScreen onyx_menu_target(uint8_t menu_index) {
     case 5:
         return OnyxScreenLfRfidAudit;
     case 6:
-        return OnyxScreenPassword;
+        return OnyxScreenSessionReport;
     case 7:
-        return OnyxScreenRandomHex;
+        return OnyxScreenPassword;
     case 8:
-        return OnyxScreenSecurityTips;
+        return OnyxScreenRandomHex;
     case 9:
+        return OnyxScreenSecurityTips;
+    case 10:
         return OnyxScreenAbout;
     default:
         return OnyxScreenMenu;
@@ -976,7 +1209,7 @@ static void onyx_periodic_update(OnyxState* state, OnyxScreen screen) {
 int32_t onyx_flipper_lab_app(void* p) {
     UNUSED(p);
 
-    FURI_LOG_I(TAG, "Starting Onyx Flipper Lab v2");
+    FURI_LOG_I(TAG, "Starting Onyx Flipper Lab v3");
 
     OnyxState state = {
         .screen = OnyxScreenMenu,
@@ -986,6 +1219,14 @@ int32_t onyx_flipper_lab_app(void* p) {
     };
 
     state.mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    furi_hal_rtc_get_datetime(&state.session_started);
+    state.gpio_session_min_mv = UINT16_MAX;
+    state.gpio_session_max_mv = 0U;
+    state.subghz_session_min_rssi = 0.0f;
+    state.subghz_session_max_rssi = -120.0f;
+    state.subghz_baseline_set = false;
+    state.report_last_export_ok = false;
+
     onyx_generate_password(state.password);
     onyx_generate_random_bytes(state.random_bytes);
 
@@ -1064,6 +1305,14 @@ int32_t onyx_flipper_lab_app(void* p) {
                     furi_mutex_release(state.mutex);
                 } else if(screen_snapshot == OnyxScreenGpioAudit) {
                     onyx_gpio_sample(&state);
+                } else if(screen_snapshot == OnyxScreenSubGhzAudit) {
+                    onyx_subghz_sample(&state);
+                    furi_mutex_acquire(state.mutex, FuriWaitForever);
+                    state.subghz_baseline_rssi = state.subghz_rssi;
+                    state.subghz_baseline_set = true;
+                    furi_mutex_release(state.mutex);
+                } else if(screen_snapshot == OnyxScreenSessionReport) {
+                    onyx_export_session_report(&state);
                 }
             } else if(event.key == InputKeyLeft || event.key == InputKeyRight) {
                 const int direction = (event.key == InputKeyRight) ? 1 : -1;
@@ -1094,6 +1343,6 @@ int32_t onyx_flipper_lab_app(void* p) {
 
     furi_mutex_free(state.mutex);
 
-    FURI_LOG_I(TAG, "Onyx Flipper Lab v2 stopped");
+    FURI_LOG_I(TAG, "Onyx Flipper Lab v3 stopped");
     return 0;
 }
