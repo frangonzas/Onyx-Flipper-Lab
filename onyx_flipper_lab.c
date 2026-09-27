@@ -438,7 +438,12 @@ static void onyx_draw_subghz(Canvas* canvas, const OnyxState* state) {
     }
 
     char line[32];
-    snprintf(line, sizeof(line), "Freq: %.3f MHz", (double)state->subghz_frequency / 1000000.0);
+    snprintf(
+        line,
+        sizeof(line),
+        "Freq: %lu.%03lu MHz",
+        (unsigned long)(state->subghz_frequency / 1000000U),
+        (unsigned long)((state->subghz_frequency % 1000000U) / 1000U));
     canvas_draw_str(canvas, 2, 24, line);
 
     snprintf(line, sizeof(line), "RSSI: %.1f dBm", (double)state->subghz_rssi);
