@@ -20,7 +20,7 @@ A useful report should include:
 
 Never include real credentials, private keys, tokens or personal data in a public issue.
 
-## V2 operational boundaries
+## v3 operational boundaries
 
 The current audit modules intentionally exclude:
 
@@ -35,7 +35,21 @@ The current audit modules intentionally exclude:
 
 GPIO auditing is input/ADC-only.
 
-Observed identifiers and generated values are held in application memory and are not intentionally written to storage.
+## Report persistence
+
+v3 can write one user-triggered field report to app storage.
+
+The report contains aggregate measurements and event counters only.
+
+It deliberately does not save:
+
+- NFC UIDs;
+- LF RFID payload bytes;
+- IR address/command values;
+- generated passwords;
+- replayable RF captures.
+
+The latest report replaces the previous report to limit data accumulation.
 
 ## Authorization
 
