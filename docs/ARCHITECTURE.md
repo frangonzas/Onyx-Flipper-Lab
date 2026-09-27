@@ -2,100 +2,105 @@
 
 ## Design goals
 
-Onyx Flipper Lab v1 prioritizes:
+Onyx Flipper Lab v2 prioritizes:
 
-1. a small attack surface;
-2. predictable input handling;
-3. no hidden persistence;
-4. no network or radio transmission;
-5. no active GPIO manipulation;
-6. clear ownership and authorization boundaries.
+1. passive observation before active testing;
+2. public/stable Flipper SDK APIs;
+3. bounded in-memory data handling;
+4. explicit module lifecycle and cleanup;
+5. no hidden persistence;
+6. no replay, cloning, jamming or brute-force paths.
 
 ## Runtime model
 
-The application uses a simple event-driven architecture.
-
 ```text
-Flipper buttons
-      │
-      ▼
+buttons
+  │
+  ▼
 input callback
-      │
-      ▼
+  │
+  ▼
 FuriMessageQueue
-      │
-      ▼
-main app loop ──────► protected state
-                         │
-                         ▼
-                    draw callback
-                         │
-                         ▼
-                       GUI
+  │
+  ▼
+main event loop ─────────► module lifecycle
+  │                           │
+  ▼                           ├── GPIO ADC
+mutex-protected state         ├── Sub-GHz RX
+  │                           ├── Bluetooth HAL
+  ▼                           ├── IR worker
+GUI draw callback             ├── NFC scanner
+                              └── LF RFID worker
 ```
 
-The input callback does not perform application logic. It copies the input event into a Furi message queue.
+The input callback only queues events. Hardware start/stop operations are performed by the main application thread.
 
-The main application loop owns navigation and state changes.
+## Concurrency
 
-The GUI draw callback reads the same state under a mutex.
+IR, NFC and LF-RFID use firmware workers/callbacks.
 
-## Randomness
+Callbacks:
 
-Random values come from the Furi HAL hardware RNG API.
+- copy only bounded results;
+- do not perform UI rendering;
+- take the application mutex before modifying shared state;
+- do not persist credential material.
 
-The password generator uses rejection sampling instead of a direct modulo operation when selecting characters, reducing modulo bias.
+The GUI draw callback uses the same mutex for consistent snapshots.
 
-Passwords are generated in volatile application memory. v1 does not intentionally write them to the SD card or transmit them.
+## Module lifecycle
 
-## Screens
+When entering a hardware module, the main thread allocates/acquires only the resources needed by that screen.
 
-### Main menu
+When BACK is pressed:
 
-Owns navigation only.
+1. the screen is switched back to the menu;
+2. the corresponding worker/scanner/radio resource is stopped;
+3. allocated objects are freed/released.
 
-### Password Generator
+This prevents hardware resources from remaining active after the user leaves a module.
 
-Generates an 18-character password using a restricted character set that avoids some visually ambiguous characters.
+## Sub-GHz
 
-### Random HEX
+The internal CC1101 is:
 
-Displays 8 random bytes as hexadecimal.
+1. initialized;
+2. reset;
+3. configured with the official asynchronous OOK preset;
+4. tuned to a selected hardware-supported frequency;
+5. placed into RX;
+6. sampled for RSSI/LQI.
 
-### Security Tips
+No TX function is called.
 
-Static, defensive security guidance.
+## GPIO
 
-### GPIO Safety
+The ADC auditor uses firmware GPIO metadata to locate ADC-capable, non-debug pins.
 
-Read-only safety guidance. No GPIO output function is called.
+The selected pin is placed into analog input mode, sampled and converted to millivolts. It is never driven high or low.
 
-### About
+## Bluetooth
 
-Project metadata.
+The public FAP API currently provides controller/link posture APIs but no stable generic passive BLE advertisement scan interface. V2 therefore avoids private BLE stack internals.
 
 ## Threat model
 
-The v1 threat model is intentionally narrow.
+Primary assets:
 
-### Assets
+- integrity of the Flipper runtime;
+- operator expectation that radio modules are passive;
+- transient tag/signal observations;
+- generated random values.
 
-- generated random values;
-- application integrity;
-- user expectation that the app is passive.
+Primary trust boundary:
 
-### Trust boundaries
+- external signals and tags are untrusted inputs.
 
-- physical input from the user;
-- Flipper firmware / Furi APIs;
-- GUI service.
+Non-goals:
 
-### Non-goals
-
-v1 is not designed to:
-
-- protect secrets after the device itself is compromised;
-- replace a dedicated password manager;
-- provide cryptographic key storage;
-- interact with third-party RF/NFC/IR systems;
-- automate penetration testing.
+- attacking third-party systems;
+- bypassing access control;
+- extracting protected NFC application data;
+- cloning credentials;
+- replaying radio captures;
+- long-term credential storage.

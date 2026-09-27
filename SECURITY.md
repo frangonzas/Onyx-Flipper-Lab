@@ -4,11 +4,11 @@
 
 Security reports concerning Onyx Flipper Lab are welcome.
 
-The project is intended for defensive, educational and authorized use.
+This project is intended for defensive engineering, education and explicitly authorized hardware assessment.
 
 ## Responsible disclosure
 
-Please do not publish sensitive exploit details before a reasonable remediation process can occur.
+Please avoid publishing sensitive exploit details before remediation can reasonably be assessed.
 
 A useful report should include:
 
@@ -18,32 +18,29 @@ A useful report should include:
 4. non-destructive proof using owned or authorized hardware;
 5. suggested mitigation, if known.
 
-Never include real credentials, tokens, private keys or personal data in a public issue.
+Never include real credentials, private keys, tokens or personal data in a public issue.
 
-## Research boundaries
+## V2 operational boundaries
 
-This project does not authorize:
+The current audit modules intentionally exclude:
 
-- testing third-party devices without permission;
-- denial-of-service activity;
-- interference with communications;
-- credential theft;
-- persistence on systems you do not own;
-- bypassing access controls on third-party equipment.
-
-## v1 security properties
-
-v1 intentionally performs no:
-
-- Sub-GHz transmission;
-- NFC emulation;
+- Sub-GHz transmission or replay;
 - infrared transmission;
-- BadUSB automation;
-- GPIO output;
-- credential persistence.
+- NFC emulation or write operations;
+- LF-RFID write/emulation;
+- brute force;
+- jamming/interference;
+- Bluetooth profile replacement or bonded-device deletion;
+- hidden persistence of observed identifiers.
 
-Generated passwords and random bytes remain in application memory and are not intentionally saved or transmitted.
+GPIO auditing is input/ADC-only.
+
+Observed identifiers and generated values are held in application memory and are not intentionally written to storage.
+
+## Authorization
+
+This project does not authorize testing third-party systems, credentials, locks, access cards, radios, vehicles, alarms or infrastructure without explicit permission.
 
 ## Safe-harbor intent
 
-Good-faith research on systems and hardware you own or are explicitly authorized to test, performed without harm or unnecessary data access, is considered responsible research within this project.
+Good-faith research performed on systems and hardware you own or are explicitly authorized to assess, without disruption or unnecessary data access, is considered responsible research within this project.

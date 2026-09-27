@@ -1,6 +1,6 @@
 # ONYX FLIPPER LAB
 
-> Defensive utilities and hardware-security learning tools for Flipper Zero.
+> Defensive hardware-audit utilities for Flipper Zero.
 
 **Fran Gonzas · Software · Systems · Security**
 
@@ -13,24 +13,26 @@ PROJECT     Onyx Flipper Lab
 PLATFORM    Flipper Zero
 TYPE        External FAP
 LANGUAGE    C
-BUILD       uFBT / official SDK
-SCOPE       Defensive / educational / authorized
-VERSION     1.0
+BUILD       uFBT / official release SDK
+SCOPE       Defensive / authorized / read-only radio
+VERSION     2.0
+CI          PASSING
 ```
 
-## What it does
+## Audit modules
 
-Onyx Flipper Lab is a small, deliberately safe utility suite for Flipper Zero.
+| Module | Capability | Write / transmit |
+|---|---|---|
+| **GPIO Auditor** | Enumerates ADC-capable pins, reads raw ADC and millivolts | No GPIO output |
+| **Sub-GHz RSSI** | RX-only RSSI/LQI monitor across common supported bands | No TX |
+| **Bluetooth Audit** | Local BLE core state, active-link state, GATT/GAP support, link RSSI | No profile changes |
+| **IR Inspector** | Receives and decodes IR protocol/address/command or raw timing count | No IR TX |
+| **NFC Detector** | Greedy protocol detection using the official NFC scanner API | No emulation/write |
+| **LF RFID Reader** | Auto ASK/PSK identification and limited in-memory data preview | No write/emulation |
+| **Password Generator** | 18-character password generated from hardware RNG | Local only |
+| **Random HEX** | 8 bytes from hardware RNG | Local only |
 
-### v1.0
-
-- **Password Generator** — creates an 18-character password locally using Flipper's hardware RNG.
-- **Random HEX** — generates and displays 8 random bytes from the hardware RNG.
-- **Security Tips** — compact defensive engineering reminders.
-- **GPIO Safety** — read-only wiring safety reminders; the app does not drive GPIO pins.
-- **About** — project identity and version.
-
-The app **does not transmit, emulate or attack anything** in v1.0.
+The V2 intentionally separates **observation** from **active testing**. Radio and credential-oriented modules are receive/read-only.
 
 ---
 
@@ -38,12 +40,17 @@ The app **does not transmit, emulate or attack anything** in v1.0.
 
 ```text
 ┌──────────────────────────┐
-│ ONYX FLIPPER LAB         │
+│ ONYX AUDIT LAB           │
 ├──────────────────────────┤
-│ > Password generator     │
+│ > GPIO auditor           │
+│   SubGHz RSSI            │
+│   Bluetooth audit        │
+│   IR inspector           │
+│   NFC detector           │
+│   LF RFID reader         │
+│   Password generator     │
 │   Random HEX             │
 │   Security tips          │
-│   GPIO safety            │
 │   About                  │
 └──────────────────────────┘
 ```
@@ -51,85 +58,88 @@ The app **does not transmit, emulate or attack anything** in v1.0.
 Controls:
 
 - **UP / DOWN** — navigate.
-- **OK** — open / regenerate.
-- **BACK** — return to menu; from the main menu it exits.
+- **LEFT / RIGHT** — switch GPIO pin or Sub-GHz band where applicable.
+- **OK** — sample/regenerate/advance.
+- **BACK** — stop the current module safely and return to the menu.
 
 ---
 
-## Architecture
+## Defensive architecture
 
 ```mermaid
 flowchart TD
-    I[Input buttons] --> Q[FuriMessageQueue]
+    I[Physical buttons] --> Q[FuriMessageQueue]
     Q --> L[Main event loop]
-    L --> S[Protected app state]
-    S --> V[ViewPort]
-    V --> G[Flipper GUI]
-    R[Hardware RNG] --> P[Password generator]
-    R --> H[Random HEX]
-    P --> S
-    H --> S
+    L --> S[Mutex-protected state]
+    S --> G[GUI ViewPort]
+
+    ADC[GPIO ADC] --> S
+    SG[Sub-GHz RX] --> S
+    BT[BLE HAL status] --> S
+    IR[IR RX worker] --> S
+    NFC[NFC scanner] --> S
+    LF[LF RFID worker] --> S
+    RNG[Hardware RNG] --> S
 ```
 
-A mutex protects shared UI state between the main application loop and the GUI draw callback.
+Asynchronous NFC, IR and LF-RFID callbacks only copy bounded results into application state. The GUI reads that state under a mutex.
 
 ---
 
 ## Build
 
-The recommended development tool is **uFBT**.
-
-### Install uFBT
+Install uFBT:
 
 ```bash
 python3 -m pip install --upgrade ufbt
 ```
 
-### Build
-
-From the repository root:
+Build:
 
 ```bash
 ufbt
 ```
 
-The generated `.fap` is placed in the `dist/` directory.
-
-### Build, upload and launch over USB
-
-Connect your Flipper Zero and run:
+Build, upload and launch over USB:
 
 ```bash
 ufbt launch
 ```
 
-The firmware SDK used to compile the FAP must be compatible with the firmware installed on the device.
+GitHub Actions also compiles the project automatically against the official Flipper release SDK and publishes the generated `.fap` as an artifact.
 
 ---
 
-## Continuous integration
+## Important Bluetooth limitation
 
-GitHub Actions uses the official **flipperdevices/flipperzero-ufbt-action** against the official release SDK.
+The public external-app SDK exposes useful Bluetooth HAL/status functions, but it does **not** expose a stable generic BLE advertisement scanner suitable for an external FAP.
 
-Every push to `main` builds a real FAP and publishes it as a workflow artifact.
+For that reason the Bluetooth module reports local controller/link posture and RSSI rather than relying on private firmware internals. This is intentional: the project should remain compatible with the public SDK instead of silently depending on unstable private APIs.
 
 ---
 
-## Security design
+## Security boundaries
 
 ```text
-authorization_first
-no_radio_transmission
-no_gpio_output
-no_credential_storage
-no_hidden_persistence
-no_third_party_targeting
-hardware_rng_for_random_generation
+RX_FIRST
+READ_ONLY_CREDENTIAL_MEDIA
+NO_SUBGHZ_TX
+NO_IR_TX
+NO_NFC_EMULATION
+NO_RFID_WRITE
+NO_REPLAY
+NO_BRUTE_FORCE
+NO_JAMMING
+NO_HIDDEN_PERSISTENCE
+AUTHORIZED_SYSTEMS_ONLY
 ```
 
-Passwords and random bytes are generated in RAM and are not intentionally persisted or transmitted by the application.
+See:
 
-See [SECURITY.md](./SECURITY.md) and [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+- [Audit modules](./docs/AUDIT-MODULES.md)
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Build guide](./docs/BUILD.md)
+- [Security policy](./SECURITY.md)
 
 ---
 
@@ -144,6 +154,7 @@ Onyx-Flipper-Lab/
 ├── LICENSE
 ├── docs/
 │   ├── ARCHITECTURE.md
+│   ├── AUDIT-MODULES.md
 │   └── BUILD.md
 └── .github/
     └── workflows/
@@ -154,10 +165,6 @@ Onyx-Flipper-Lab/
 
 ## Ethical scope
 
-Use security tools only on devices, systems and infrastructure that you own or are explicitly authorized to test.
-
-This repository is designed for defensive engineering, education and experimentation.
-
----
+Use hardware-security and radio-analysis tools only on devices, systems and infrastructure that you own or are explicitly authorized to assess.
 
 © 2026 Fran Gonzas
