@@ -1,0 +1,10 @@
+App(
+    appid="onyx_flipper_lab",
+    name="Onyx Flipper Lab",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="onyx_flipper_lab_app",
+    requires=["gui"],
+    stack_size=2 * 1024,
+    fap_category="Tools",
+    fap_version="1.0",
+)
